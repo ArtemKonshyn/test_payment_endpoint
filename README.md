@@ -1,43 +1,86 @@
 # Payment Endpoint
 
-This is the payment part of an online shop that sells physical products. A user pays for their active cart with a saved card.
+This is the payment part of an online shop that sells physical products. A user pays for their active cart with their saved card.
 
 - **Stack:** Python 3.12, Flask, SQLAlchemy 2, PostgreSQL 16, Celery with Redis, Docker Compose.
-- **Endpoint:** `POST /carts/{cart_id}/payments` starts a payment and returns `202 Accepted`. A background worker charges the card.
+- **Endpoint:** `POST /payments` starts the payment for the user's active cart and returns `202 Accepted`. A background worker charges the card.
 - **Status:** `GET /payments/{payment_id}` returns the result.
-- **Spec:** [`docs/openapi.yaml`](docs/openapi.yaml).
+- **Spec:** [`docs/openapi.yaml`](docs/openapi.yaml), served by Swagger UI at http://localhost:8080.
 
 ## Run
 
 You need Docker.
 
+Start the stack. It runs in the foreground and shows the logs; press Ctrl+C to stop it.
+
 ```bash
-docker compose up --build                # db, redis, migrations, api, worker, beat
-docker compose exec api flask seed           # sample users, products, carts and cards
+docker compose up --build    # db, redis, migrations, api, worker, beat, swagger-ui
 ```
 
-The API listens on `http://localhost:8000`. Migrations run automatically in the `migrate` service.
+In a second terminal, load the sample data. Do this once per fresh database: the rows have fixed ids, so a second run fails. Run `docker compose down -v` to start over.
 
-### Try it
+```bash
+docker compose exec api flask seed    # sample users, products, carts and cards
+```
 
-There is no login endpoint, because auth is outside this service. Create a token with the CLI instead:
+The API listens on `http://localhost:8000` and Swagger UI on http://localhost:8080. Migrations run automatically in the `migrate` service.
+
+### Sample data
+
+| User | User id | Cart | Card |
+|---|---|---|---|
+| Alice | `11111111-1111-1111-1111-111111111111` | Blue Kettle + 2 × Ceramic Mug = 70.00 USD | always succeeds |
+| Bob | `22222222-2222-2222-2222-222222222222` | Wool Blanket = 89.99 USD | always declined |
+
+Each cart can be paid only once. After that, the user has no active cart and `POST /payments` answers `404`. Run `docker compose down -v` and the steps above to start over.
+
+### Get a token
+
+There is no login endpoint, because auth is outside this service. Create a JWT for a user with the CLI. It is valid for 1 hour.
+
+```bash
+docker compose exec -T api flask create-token 11111111-1111-1111-1111-111111111111
+```
+
+To put it straight into the clipboard on macOS, so line wrapping can't break it:
+
+```bash
+docker compose exec -T api flask create-token 11111111-1111-1111-1111-111111111111 | tr -d '\n' | pbcopy
+```
+
+The token is the long string that starts with `eyJ`. The user id itself is not a token: sending it returns `401 Not enough segments`.
+
+### Try it in Swagger UI
+
+1. Open http://localhost:8080 and click **Authorize**.
+2. Paste the token only, without `Bearer ` and without spaces (Swagger UI adds the `Bearer` prefix). Click **Authorize**, then **Close**.
+3. `POST /payments` → **Try it out** → set `Idempotency-Key` to any string, for example `order-1` → **Execute**. The response is `202` with `"status": "pending"`.
+4. `GET /payments/{payment_id}` → **Try it out** → replace Swagger's example id (`3fa85f64-…`) with the `id` from step 3 → **Execute**. The status is `succeeded` (or `failed` for Bob) about a second later.
+5. Run step 3 again with the same key: `200` and the same payment, with no second charge.
+
+To switch users, click **Authorize**, then **Logout**, and paste the other user's token.
+
+### Try it with curl
+
+The block can be pasted as is (it needs curl 7.84 or newer for `%header{location}`):
 
 ```bash
 ALICE=$(docker compose exec -T api flask create-token 11111111-1111-1111-1111-111111111111)
 
-# Start the payment (returns 202 and status "pending")
-curl -i -X POST localhost:8000/carts/c1c1c1c1-c1c1-c1c1-c1c1-c1c1c1c1c1c1/payments \
-     -H "Authorization: Bearer $ALICE" -H "Idempotency-Key: order-1"
+# Start the payment and keep the payment URL from the Location header (the response is 202)
+PAYMENT_URL=$(curl -s -o /dev/null -w '%header{location}' \
+     -X POST localhost:8000/payments \
+     -H "Authorization: Bearer $ALICE" -H "Idempotency-Key: order-1")
 
-# Read the result (status "succeeded" about a second later)
-curl localhost:8000/payments/<id from the Location header> -H "Authorization: Bearer $ALICE"
+# Read the payment: "pending" at first, "succeeded" about a second later
+curl "localhost:8000$PAYMENT_URL" -H "Authorization: Bearer $ALICE"
 
 # Send the same request again: returns 200 and the same payment, with no second charge
-curl -i -X POST localhost:8000/carts/c1c1c1c1-c1c1-c1c1-c1c1-c1c1c1c1c1c1/payments \
+curl -i -X POST localhost:8000/payments \
      -H "Authorization: Bearer $ALICE" -H "Idempotency-Key: order-1"
 ```
 
-Bob (`22222222-2222-2222-2222-222222222222`) has cart `c2c2c2c2-c2c2-c2c2-c2c2-c2c2c2c2c2c2` and a card that is always declined, so you can see a failed payment.
+For a failed payment, run the same steps with Bob's user id.
 
 ## Tests
 
@@ -55,7 +98,7 @@ To run them without the test container, start the database with `docker compose 
 
 ## Architecture
 
-The folder layout follows [microsoft/cookiecutter-python-flask-clean-architecture](https://github.com/microsoft/cookiecutter-python-flask-clean-architecture), an onion architecture. Each layer depends only on the layers inside it. I removed the parts this task does not need: maintenance mode, the service prefix, CORS, and the generic CRUD base classes.
+The folder layout follows [microsoft/cookiecutter-python-flask-clean-architecture](https://github.com/microsoft/cookiecutter-python-flask-clean-architecture), an onion architecture. Each layer depends only on the layers inside it. I removed the parts this task does not need: maintenance mode, the service prefix and the generic CRUD base classes. CORS is kept only so the local Swagger UI (port 8080) can call the API.
 
 ```
 src/
@@ -75,10 +118,10 @@ The services depend on ports (`src/domain/ports.py`), not on concrete classes. T
 Client            API (PaymentService)                       Worker (PaymentProcessingService)
   │ POST + Idempotency-Key │                                            │
   │──────────────────────▶ │ BEGIN                                      │
-  │                        │  lock cart (SELECT … FOR UPDATE)           │
   │                        │  same key used before? → return that payment (200)
-  │                        │  checks: active cart, no live payment,     │
-  │                        │          default card, not empty           │
+  │                        │  lock the user's active cart (FOR UPDATE)  │
+  │                        │  check the key again under the lock        │
+  │                        │  checks: no live payment, card, not empty  │
   │                        │  INSERT payment 'pending'                  │
   │                        │ COMMIT                                     │
   │                        │ enqueue(payment_id) ──────────────────────▶│ tx: lock payment, set 'processing'
@@ -99,14 +142,14 @@ Client            API (PaymentService)                       Worker (PaymentProc
 |---|---|
 | `payments` table, one row per payment attempt | A failed attempt stays as history. The user retries with a new Idempotency-Key, which creates a new row. |
 | `amount` and `currency` stored on the payment | Snapshot of what was charged, even if prices change later. |
-| `payment_method_id` stored on the payment | Records which card was charged, even if the default card changes later. |
+| `payment_method_id` stored on the payment | Records which card was charged, even if the user's card changes later. |
 | `UNIQUE (user_id, idempotency_key)` | One payment per key. Keys are per user, so two users can't collide. |
 | Partial unique index on `cart_id` for `pending`, `processing`, `succeeded` | The database itself makes sure a cart can't be paid twice, even if the app has a bug. |
 | `CHECK` on `status` and `amount > 0` | Invalid states can't be stored. |
 | Partial index on `updated_at` for unfinished payments | Keeps the stale payment sweep fast as the table grows. |
 | `provider_charge_id` and `failure_reason` | Needed for reconciliation and support. |
 
-### Response codes of `POST /carts/{cart_id}/payments`
+### Response codes of `POST /payments`
 
 | Code | Meaning |
 |---|---|
@@ -114,9 +157,9 @@ Client            API (PaymentService)                       Worker (PaymentProc
 | 200 | Same `Idempotency-Key` sent again. Returns the existing payment |
 | 400 | `Idempotency-Key` missing or too long |
 | 401 | Token missing or invalid |
-| 404 | Cart not found, or it belongs to another user (the response doesn't say which) |
-| 409 | Cart is not active, cart already has a live payment, or the key was used for another cart |
-| 422 | Empty cart, or the user has no default card |
+| 404 | The user has no active cart |
+| 409 | A payment for the active cart is already in progress |
+| 422 | Empty cart, or the user has no card |
 
 ## Assumptions
 
@@ -126,7 +169,8 @@ Client            API (PaymentService)                       Worker (PaymentProc
 - **Currency.** All products in a cart have the same currency.
 - **Stock** is handled by another part of the shop (for example at order fulfilment), not by the payment.
 - **Cart edits.** The cart service must not allow changes while a cart has a `pending` or `processing` payment. The amount is stored on the payment anyway.
-- **Card.** The task says each user has a card token, so the payment always charges the user's default card. There is no request body.
+- **Cart.** A user has one active cart at a time (as the base schema says), so the endpoint pays that cart and takes no cart id.
+- **Card.** Each user has exactly one card token, so the payment always charges it. There is no request body.
 - **Mock provider.** The end of the card token decides the result: `…_decline` is declined, `…_unavailable` simulates an outage, and anything else succeeds. The payment id is sent as the provider's idempotency key; a real provider uses it to never charge the same payment twice.
 - **Idempotency keys** are kept forever. In production they would expire after about 24 hours, like Stripe's.
 - **Retry exhausted.** When the provider stays unavailable, the payment is marked `failed`. With a real provider, it would be reconciled first, because the charge may have gone through.

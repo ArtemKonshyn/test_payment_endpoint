@@ -11,8 +11,7 @@ class PaymentMethodRepository:
     def __init__(self, session: Session):
         self._session = session
 
-    def find_default(self, user_id: UUID) -> SQLPaymentMethod | None:
-        query = select(SQLPaymentMethod).where(
-            SQLPaymentMethod.user_id == user_id, SQLPaymentMethod.is_default.is_(True)
-        )
-        return self._session.scalars(query.limit(1)).first()
+    def find_for_user(self, user_id: UUID) -> SQLPaymentMethod | None:
+        """The user's card. Each user is assumed to have exactly one."""
+        query = select(SQLPaymentMethod).where(SQLPaymentMethod.user_id == user_id)
+        return self._session.scalars(query).first()

@@ -14,20 +14,15 @@ from src.services.payment_service import PaymentService
 blueprint = Blueprint("payment", __name__)
 
 
-@blueprint.route("/carts/<uuid:cart_id>/payments", methods=["POST"])
+@blueprint.route("/payments", methods=["POST"])
 @jwt_required()
 @idempotency_key_required
 @inject
 def start_payment(
-    cart_id: UUID,
     idempotency_key: str,
     payment_service: PaymentService = Provide[DependencyContainer.payment_service],
 ):
-    started = payment_service.start_payment(
-        user_id=current_user_id(),
-        cart_id=cart_id,
-        idempotency_key=idempotency_key,
-    )
+    started = payment_service.start_payment(user_id=current_user_id(), idempotency_key=idempotency_key)
     status = HTTPStatus.ACCEPTED if started.created else HTTPStatus.OK
     location = url_for(".get_payment", payment_id=started.payment.id)
     return PaymentSchema().dump(started.payment), status, {"Location": location}

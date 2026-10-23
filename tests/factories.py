@@ -40,10 +40,8 @@ class Factory:
             )
         )
 
-    def payment_method(self, user: SQLUser, provider_token="tok_test_visa", is_default=True) -> SQLPaymentMethod:
-        return self._save(
-            SQLPaymentMethod(user_id=user.id, provider_token=provider_token, is_default=is_default)
-        )
+    def payment_method(self, user: SQLUser, provider_token="tok_test_visa") -> SQLPaymentMethod:
+        return self._save(SQLPaymentMethod(user_id=user.id, provider_token=provider_token, is_default=True))
 
     def payment(self, cart: SQLCart, payment_method: SQLPaymentMethod, status=PaymentStatus.PENDING) -> SQLPayment:
         return self._save(

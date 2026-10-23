@@ -74,7 +74,7 @@ class PaymentProcessingService:
         payment.provider_charge_id = provider_charge_id
         self._set_status(payment, PaymentStatus.SUCCEEDED)
 
-        cart = self._carts.find_for_update(payment.cart_id, payment.user_id)
+        cart = self._carts.find_for_update(payment.cart_id)
         cart.status = CartStatus.CHECKED_OUT
         cart.updated_at = _now()
         logger.info("Payment %s succeeded", payment.id)

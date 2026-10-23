@@ -13,6 +13,8 @@ class Config:
         "JWT_SECRET_KEY", "local-development-secret-change-me-in-production"
     )
     JWT_ACCESS_TOKEN_EXPIRES = timedelta(hours=1)
+    # Comma-separated browser origins allowed to call the API, e.g. the Swagger UI.
+    CORS_ORIGINS = [origin for origin in os.environ.get("CORS_ORIGINS", "").split(",") if origin]
     CELERY = {
         "broker_url": REDIS_URL,
         "broker_connection_retry_on_startup": True,

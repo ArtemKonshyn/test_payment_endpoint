@@ -33,24 +33,16 @@ class InvalidIdempotencyKeyException(ApiException):
     message = "Idempotency-Key header is required and must be at most 255 characters"
 
 
-class CartNotFoundException(NotFoundException):
-    message = "Cart not found"
+class ActiveCartNotFoundException(NotFoundException):
+    message = "User has no active cart"
 
 
 class PaymentNotFoundException(NotFoundException):
     message = "Payment not found"
 
 
-class CartNotActiveException(ConflictException):
-    message = "Cart is not active"
-
-
 class CartHasLivePaymentException(ConflictException):
-    message = "Cart already has a payment in progress or completed"
-
-
-class IdempotencyKeyReusedException(ConflictException):
-    message = "Idempotency-Key was already used for a different cart"
+    message = "A payment for the active cart is already in progress"
 
 
 class EmptyCartException(UnprocessableException):
@@ -58,7 +50,7 @@ class EmptyCartException(UnprocessableException):
 
 
 class PaymentMethodNotFoundException(UnprocessableException):
-    message = "User has no default payment method"
+    message = "User has no payment method"
 
 
 class PaymentProviderUnavailableException(Exception):

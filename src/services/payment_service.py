@@ -2,16 +2,13 @@ import logging
 from dataclasses import dataclass
 from uuid import UUID
 
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from src.domain.constants import CartStatus, PaymentStatus
+from src.domain.constants import PaymentStatus
 from src.domain.exceptions import (
+    ActiveCartNotFoundException,
     CartHasLivePaymentException,
-    CartNotActiveException,
-    CartNotFoundException,
     EmptyCartException,
-    IdempotencyKeyReusedException,
     PaymentMethodNotFoundException,
     PaymentNotFoundException,
 )
@@ -23,8 +20,6 @@ from src.infrastructure.repositories.payment_repository import PaymentRepository
 from src.services.transaction import transaction
 
 logger = logging.getLogger(__name__)
-
-IDEMPOTENCY_KEY_CONSTRAINT = "uq_payments_user_idempotency_key"
 
 
 @dataclass(frozen=True)
@@ -51,29 +46,24 @@ class PaymentService:
         self._total_calculator = cart_total_calculator
         self._task_queue = payment_task_queue
 
-    def start_payment(
-        self,
-        user_id: UUID,
-        cart_id: UUID,
-        idempotency_key: str,
-    ) -> StartedPayment:
-        try:
-            with transaction(self._session):
-                cart = self._carts.find_for_update(cart_id, user_id)
-                if cart is None:
-                    raise CartNotFoundException()
+    def start_payment(self, user_id: UUID, idempotency_key: str) -> StartedPayment:
+        """Start the payment for the user's active cart."""
+        with transaction(self._session):
+            # Checked before the cart lookup, so a repeated request still gets its payment after checkout.
+            earlier_payment = self._payments.find_by_idempotency_key(user_id, idempotency_key)
+            if earlier_payment is not None:
+                return StartedPayment(payment=earlier_payment, created=False)
 
-                # Checked after the cart lock, so a concurrent request with the same key is visible here.
-                earlier_payment = self._payments.find_by_idempotency_key(user_id, idempotency_key)
-                if earlier_payment is not None:
-                    return self._replay(earlier_payment, cart_id)
+            cart = self._carts.find_active_for_update(user_id)
+            if cart is None:
+                raise ActiveCartNotFoundException()
 
-                payment = self._create_pending_payment(cart, idempotency_key)
-        except IntegrityError as error:
-            # The same key was used at the same time for another cart of this user.
-            if error.orig.diag.constraint_name != IDEMPOTENCY_KEY_CONSTRAINT:
-                raise
-            raise IdempotencyKeyReusedException() from error
+            # Checked again under the cart lock: a request with the same key may have committed meanwhile.
+            earlier_payment = self._payments.find_by_idempotency_key(user_id, idempotency_key)
+            if earlier_payment is not None:
+                return StartedPayment(payment=earlier_payment, created=False)
+
+            payment = self._create_pending_payment(cart, idempotency_key)
 
         self._enqueue(payment.id)
         return StartedPayment(payment=payment, created=True)
@@ -85,12 +75,10 @@ class PaymentService:
         return payment
 
     def _create_pending_payment(self, cart: SQLCart, idempotency_key: str) -> SQLPayment:
-        if cart.status != CartStatus.ACTIVE:
-            raise CartNotActiveException()
         if self._payments.has_live_payment(cart.id):
             raise CartHasLivePaymentException()
 
-        payment_method = self._payment_methods.find_default(cart.user_id)
+        payment_method = self._payment_methods.find_for_user(cart.user_id)
         if payment_method is None:
             raise PaymentMethodNotFoundException()
 
@@ -107,11 +95,6 @@ class PaymentService:
             status=PaymentStatus.PENDING,
             idempotency_key=idempotency_key,
         )
-
-    def _replay(self, payment: SQLPayment, cart_id: UUID) -> StartedPayment:
-        if payment.cart_id != cart_id:
-            raise IdempotencyKeyReusedException()
-        return StartedPayment(payment=payment, created=False)
 
     def _enqueue(self, payment_id: UUID) -> None:
         # The payment is already saved. If the queue is down, the stale payment sweep picks it up later.
