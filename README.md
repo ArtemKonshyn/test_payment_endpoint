@@ -187,6 +187,7 @@ Client            API (PaymentService)                       Worker (PaymentProc
 - **Stock** is handled by another part of the shop (for example at order fulfilment), not by the payment.
 - **Cart edits.** The cart service must not allow changes while a cart has a `pending` or `processing` payment. The amount is stored on the payment anyway.
 - **Cart.** A user has one active cart at a time (as the base schema says), so the endpoint pays that cart and takes no cart id.
+- **Order.** A production shop would first turn the cart into an order: a fixed record of the items, prices and total that keeps the purchase history and is what gets paid. The task has no orders table and says the user pays for the cart, so the payment points to the cart and stores the amount it charged.
 - **Card.** Each user has exactly one card token, so the payment always charges it. There is no request body.
 - **Mock provider.** The end of the card token decides the result: `…_decline` is declined, `…_unavailable` simulates an outage, and anything else succeeds. The payment id is sent as the provider's idempotency key; a real provider uses it to never charge the same payment twice.
 - **Idempotency keys** are kept forever. In production they would expire after about 24 hours, like Stripe's.
