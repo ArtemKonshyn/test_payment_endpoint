@@ -98,7 +98,7 @@ To run them without the test container, start the database with `docker compose 
 
 ## Architecture
 
-The folder layout follows [microsoft/cookiecutter-python-flask-clean-architecture](https://github.com/microsoft/cookiecutter-python-flask-clean-architecture), an onion architecture. Each layer depends only on the layers inside it. I removed the parts this task does not need: maintenance mode, the service prefix, CORS and the generic CRUD base classes.
+The folder layout follows [microsoft/cookiecutter-python-flask-clean-architecture](https://github.com/microsoft/cookiecutter-python-flask-clean-architecture), an onion architecture. Each layer depends only on the layers inside it.
 
 ```
 src/
@@ -111,7 +111,15 @@ migrations/         Alembic: 0001 base schema from the task, 0002 payments
 docs/               openapi.yaml and the Swagger UI page served at /docs
 ```
 
-The services depend on ports (`src/domain/ports.py`), not on concrete classes. To use a real provider, write a new `PaymentGateway` and change one line in the container.
+The services depend on ports (`src/domain/ports.py`), not on concrete classes. `src/dependency_container.py` picks the implementation for each port:
+
+| Port | What it is | Implementation |
+|---|---|---|
+| `PaymentGateway` | the external payment provider | `MockPaymentGateway` |
+| `CartTotalCalculator` | the shop's existing total calculation service | `SQLCartTotalCalculator` (mock) |
+| `PaymentTaskQueue` | the background job queue | `CeleryPaymentTaskQueue` |
+
+To use a real provider, write a new `PaymentGateway` and change one line in the container.
 
 ### Payment flow
 
@@ -166,7 +174,7 @@ Client            API (PaymentService)                       Worker (PaymentProc
 
 - **Auth.** Users log in through another service, which issues HS256 JWTs. The `sub` claim is the user id. `flask create-token` stands in for that service.
 - **"Starts the payment"** means the endpoint does not wait for the provider. It returns `202`, and the client polls `GET /payments/{id}`. In production, a provider webhook would complete the payment instead of polling.
-- **Total calculation service.** It already exists in the shop. It is mocked as the sum of `quantity × unit_price` over `cart_items` (`MockCartTotalCalculator`), with no taxes, shipping or discounts.
+- **Total calculation service.** It already exists in the shop. It is mocked as the sum of `quantity × unit_price` over `cart_items` (`SQLCartTotalCalculator`), with no taxes, shipping or discounts.
 - **Currency.** All products in a cart have the same currency.
 - **Stock** is handled by another part of the shop (for example at order fulfilment), not by the payment.
 - **Cart edits.** The cart service must not allow changes while a cart has a `pending` or `processing` payment. The amount is stored on the payment anyway.
