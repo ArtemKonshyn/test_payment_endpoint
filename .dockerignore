@@ -1,0 +1,7 @@
+.git
+.idea
+.venv
+venv
+__pycache__
+*.txt
+!requirements*.txt
