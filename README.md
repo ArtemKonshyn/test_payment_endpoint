@@ -42,13 +42,7 @@ There is no login endpoint, because auth is outside this service. Create a JWT f
 docker compose exec -T api flask create-token 11111111-1111-1111-1111-111111111111
 ```
 
-The token is the long string that starts with `eyJ`. The user id itself is not a token: sending it returns `401 Not enough segments`.
-
-To put it straight into the clipboard on macOS, so line wrapping can't break it:
-
-```bash
-docker compose exec -T api flask create-token 11111111-1111-1111-1111-111111111111 | tr -d '\n' | pbcopy
-```
+The token is the long string that starts with `eyJ`. Copy it as one line, with no spaces or line breaks. The user id itself is not a token: sending it returns `401 Not enough segments`.
 
 ### Try it in Swagger UI
 
@@ -110,6 +104,20 @@ src/
 migrations/         Alembic: 0001 base schema from the task, 0002 payments
 docs/               openapi.yaml and the Swagger UI page served at /docs
 ```
+
+Main business logic files:
+
+| File | What it does |
+|---|---|
+| `src/api/controllers/payment.py` | `POST /payments` and `GET /payments/{payment_id}` |
+| `src/services/payment_service.py` | Starts a payment: idempotency check, active cart lock, validation, `pending` payment, enqueue |
+| `src/services/payment_processing_service.py` | Charges the card in the worker and sets the result: `succeeded` + cart `checked_out`, or `failed` |
+| `src/infrastructure/tasks/payment_tasks.py` | Celery tasks: `process_payment` with retries, `requeue_stale_payments` for the recovery sweep |
+| `src/infrastructure/repositories/payment_repository.py` | Payment queries: idempotency key lookup, live payment check, row locks, stale payments |
+| `src/infrastructure/repositories/cart_repository.py` | Locks the user's active cart (`SELECT … FOR UPDATE`) |
+| `src/domain/constants.py` | Payment and cart statuses, stale payment age |
+| `src/domain/ports.py` | Interfaces of the payment provider, the total calculation service and the job queue |
+| `migrations/versions/0002_payments.py` | The `payments` table, its constraints and indexes |
 
 The services depend on ports (`src/domain/ports.py`), not on concrete classes. `src/dependency_container.py` picks the implementation for each port:
 
