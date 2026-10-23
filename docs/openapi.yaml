@@ -1,0 +1,119 @@
+openapi: 3.0.3
+info:
+  title: Payment API
+  version: 1.0.0
+  description: |
+    Starts card payments for the user's active cart. Payments are charged in the background.
+
+    Get a token with `docker compose exec -T api flask create-token <user_id>`, click **Authorize**
+    and paste the token without the `Bearer ` prefix.
+
+security:
+  - bearerAuth: []
+
+paths:
+  /payments:
+    post:
+      summary: Start the payment for the user's active cart
+      description: |
+        Creates a `pending` payment for the user's active cart, charged to the user's card,
+        and hands it to the background worker. Poll `GET /payments/{payment_id}`
+        (the `Location` header) for the result.
+        Sending the same `Idempotency-Key` again returns the existing payment.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: Unique key per payment attempt, chosen by the client. Unique per user.
+          schema: {type: string, minLength: 1, maxLength: 255}
+          example: order-1
+      responses:
+        "202":
+          description: Payment created and queued.
+          headers:
+            Location: {schema: {type: string}, description: URL of the payment}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Payment"}
+        "200":
+          description: The Idempotency-Key was already used. Returns that payment.
+          headers:
+            Location: {schema: {type: string}, description: URL of the payment}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Payment"}
+        "400":
+          description: Idempotency-Key is missing or too long.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404":
+          description: The user has no active cart.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "409":
+          description: A payment for the active cart is already in progress.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+        "422":
+          description: The cart is empty, or the user has no payment method.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+
+  /payments/{payment_id}:
+    get:
+      summary: Get a payment of the current user
+      parameters:
+        - name: payment_id
+          in: path
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        "200":
+          description: The payment.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Payment"}
+        "401": {$ref: "#/components/responses/Unauthorized"}
+        "404":
+          description: The payment does not exist or belongs to another user.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: HS256 token. The `sub` claim is the user id.
+
+  responses:
+    Unauthorized:
+      description: The token is missing or invalid.
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+
+  schemas:
+    Payment:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        cart_id: {type: string, format: uuid}
+        payment_method_id: {type: string, format: uuid}
+        status: {type: string, enum: [pending, processing, succeeded, failed]}
+        amount: {type: string, example: "70.00"}
+        currency: {type: string, example: USD}
+        failure_reason: {type: string, nullable: true, example: null}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    Error:
+      type: object
+      properties:
+        error_message: {type: string}

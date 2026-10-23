@@ -5,7 +5,7 @@ This is the payment part of an online shop that sells physical products. A user 
 - **Stack:** Python 3.12, Flask, SQLAlchemy 2, PostgreSQL 16, Celery with Redis, Docker Compose.
 - **Endpoint:** `POST /payments` starts the payment for the user's active cart and returns `202 Accepted`. A background worker charges the card.
 - **Status:** `GET /payments/{payment_id}` returns the result.
-- **Spec:** [`docs/openapi.yaml`](docs/openapi.yaml), served by Swagger UI at http://localhost:8080.
+- **Docs:** Swagger UI at http://localhost:8000/docs, spec in [`docs/openapi.yaml`](docs/openapi.yaml).
 
 ## Run
 
@@ -14,7 +14,7 @@ You need Docker.
 Start the stack. It runs in the foreground and shows the logs; press Ctrl+C to stop it.
 
 ```bash
-docker compose up --build    # db, redis, migrations, api, worker, beat, swagger-ui
+docker compose up --build    # db, redis, migrations, api, worker, beat
 ```
 
 In a second terminal, load the sample data. Do this once per fresh database: the rows have fixed ids, so a second run fails. Run `docker compose down -v` to start over.
@@ -23,7 +23,7 @@ In a second terminal, load the sample data. Do this once per fresh database: the
 docker compose exec api flask seed    # sample users, products, carts and cards
 ```
 
-The API listens on `http://localhost:8000` and Swagger UI on http://localhost:8080. Migrations run automatically in the `migrate` service.
+The API listens on `http://localhost:8000`, with Swagger UI at http://localhost:8000/docs. Migrations run automatically in the `migrate` service.
 
 ### Sample data
 
@@ -42,17 +42,17 @@ There is no login endpoint, because auth is outside this service. Create a JWT f
 docker compose exec -T api flask create-token 11111111-1111-1111-1111-111111111111
 ```
 
+The token is the long string that starts with `eyJ`. The user id itself is not a token: sending it returns `401 Not enough segments`.
+
 To put it straight into the clipboard on macOS, so line wrapping can't break it:
 
 ```bash
 docker compose exec -T api flask create-token 11111111-1111-1111-1111-111111111111 | tr -d '\n' | pbcopy
 ```
 
-The token is the long string that starts with `eyJ`. The user id itself is not a token: sending it returns `401 Not enough segments`.
-
 ### Try it in Swagger UI
 
-1. Open http://localhost:8080 and click **Authorize**.
+1. Open http://localhost:8000/docs and click **Authorize**.
 2. Paste the token only, without `Bearer ` and without spaces (Swagger UI adds the `Bearer` prefix). Click **Authorize**, then **Close**.
 3. `POST /payments` → **Try it out** → set `Idempotency-Key` to any string, for example `order-1` → **Execute**. The response is `202` with `"status": "pending"`.
 4. `GET /payments/{payment_id}` → **Try it out** → replace Swagger's example id (`3fa85f64-…`) with the `id` from step 3 → **Execute**. The status is `succeeded` (or `failed` for Bob) about a second later.
@@ -98,16 +98,17 @@ To run them without the test container, start the database with `docker compose 
 
 ## Architecture
 
-The folder layout follows [microsoft/cookiecutter-python-flask-clean-architecture](https://github.com/microsoft/cookiecutter-python-flask-clean-architecture), an onion architecture. Each layer depends only on the layers inside it. I removed the parts this task does not need: maintenance mode, the service prefix and the generic CRUD base classes. CORS is kept only so the local Swagger UI (port 8080) can call the API.
+The folder layout follows [microsoft/cookiecutter-python-flask-clean-architecture](https://github.com/microsoft/cookiecutter-python-flask-clean-architecture), an onion architecture. Each layer depends only on the layers inside it. I removed the parts this task does not need: maintenance mode, the service prefix, CORS and the generic CRUD base classes.
 
 ```
 src/
-  api/              Flask blueprints, marshmallow schemas, JWT, Idempotency-Key header
+  api/              Flask blueprints, marshmallow schemas, JWT, Idempotency-Key header, Swagger UI
   services/         PaymentService (API side), PaymentProcessingService (worker side)
   domain/           statuses, exceptions, ports (interfaces of the provider, total service, queue)
   infrastructure/   SQLAlchemy models and repositories, mock provider, Celery tasks
   dependency_container.py   wires everything together (dependency-injector)
 migrations/         Alembic: 0001 base schema from the task, 0002 payments
+docs/               openapi.yaml and the Swagger UI page served at /docs
 ```
 
 The services depend on ports (`src/domain/ports.py`), not on concrete classes. To use a real provider, write a new `PaymentGateway` and change one line in the container.
@@ -165,7 +166,7 @@ Client            API (PaymentService)                       Worker (PaymentProc
 
 - **Auth.** Users log in through another service, which issues HS256 JWTs. The `sub` claim is the user id. `flask create-token` stands in for that service.
 - **"Starts the payment"** means the endpoint does not wait for the provider. It returns `202`, and the client polls `GET /payments/{id}`. In production, a provider webhook would complete the payment instead of polling.
-- **Total calculation service.** It already exists in the shop. It is mocked as the sum of `quantity × unit_price` over `cart_items` (`SQLCartTotalCalculator`), with no taxes, shipping or discounts.
+- **Total calculation service.** It already exists in the shop. It is mocked as the sum of `quantity × unit_price` over `cart_items` (`MockCartTotalCalculator`), with no taxes, shipping or discounts.
 - **Currency.** All products in a cart have the same currency.
 - **Stock** is handled by another part of the shop (for example at order fulfilment), not by the payment.
 - **Cart edits.** The cart service must not allow changes while a cart has a `pending` or `processing` payment. The amount is stored on the payment anyway.

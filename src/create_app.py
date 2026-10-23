@@ -1,9 +1,9 @@
 from flask import Flask
 
 from src.api.authentication import setup_jwt
+from src.api.controllers.docs import blueprint as docs_blueprint
 from src.api.controllers.payment import blueprint as payment_blueprint
 from src.celery_app import setup_celery
-from src.cors import setup_cors
 from src.dependency_container import setup_dependency_container
 from src.error_handler import setup_error_handler
 from src.infrastructure.databases.sql_alchemy import setup_sqlalchemy
@@ -17,10 +17,10 @@ def create_app(config) -> Flask:
 
     setup_sqlalchemy(app)
     setup_jwt(app)
-    setup_cors(app)
     setup_celery(app)
     setup_dependency_container(app)
     app.register_blueprint(payment_blueprint)
+    app.register_blueprint(docs_blueprint)
     setup_error_handler(app)
     setup_management(app)
     return app

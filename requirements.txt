@@ -1,7 +1,6 @@
 celery[redis]==5.4.0
 dependency-injector==4.42.0
 Flask==3.0.3
-Flask-Cors==5.0.0
 Flask-JWT-Extended==4.6.0
 Flask-Migrate==4.0.7
 Flask-SQLAlchemy==3.1.1
